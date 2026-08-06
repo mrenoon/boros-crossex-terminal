@@ -605,9 +605,17 @@ function Install-Service {
   #
   # powershell.exe is a console-subsystem binary: Windows creates the console
   # BEFORE the process runs, and PowerShell can only hide it afterwards. When
-  # the default terminal application is Windows Terminal - the Windows 11 22H2+
-  # default - that console is handed off to WindowsTerminal.exe and the hidden
-  # state is dropped on the way (microsoft/terminal#12464). What the user gets,
+  # the default terminal application resolves to Windows Terminal, that console
+  # is handed off to WindowsTerminal.exe and the hidden state is dropped on the
+  # way (microsoft/terminal#12464).
+  #
+  # WHICH machines those are is not tidy, and it is why this reproduces for some
+  # users and not others on what looks like the same OS. Windows 11 only, and
+  # the shipping "Let Windows decide" does not resolve the same way everywhere -
+  # observed landing on Console Host (no fault) on one Windows 11 PC during this
+  # investigation, while the reporter's clearly landed on Windows Terminal. Do
+  # not assume a machine is unaffected because a colleague's is. What the user
+  # on the wrong side of that coin flip gets,
   # as reported in the wild: a blank "Windows PowerShell" window at sign-in
   # showing nothing (the runner sends both streams to log files), belonging to a
   # task Task Manager's Startup tab does not list because it never lists

@@ -317,8 +317,9 @@ notionals and check your positions on the exchange directly.
   ([microsoft/terminal#12464](https://github.com/microsoft/terminal/issues/12464)).
   Re-run the install command to pick up the fix. If it persists, the installer will have
   said so during the install — set **Settings → System → For developers → Terminal** to
-  **Windows Console Host**. If the window reappears every few seconds the server itself is
-  also crash-looping, so check `server.err.log` above.
+  **Windows Console Host**. Closing the window is not a fix and does not mean anything is
+  broken: it hosts the server, so closing it stops the app and the service restarts it a
+  few seconds later. Nothing about it affects your keys, your positions, or your data.
 - **"Port 6688 is already in use" during install** — find the owner with
   `Get-NetTCPConnection -LocalPort 6688 -State Listen | Select-Object OwningProcess`, quit
   it, and re-run the installer (or `$env:BOROS_PORT=7788` before re-running).

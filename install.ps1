@@ -571,9 +571,22 @@ function Register-Service {
 # the failure surfaces only in the task's LastTaskResult, after both calls are
 # long done. So a clean registration is not evidence; a running supervisor is.
 # This is what makes the fallback in Install-Service safe to rely on.
+#
+# Matched on the RUNNER's own command line, NOT on any Get-ServerProcess hit.
+# That function deliberately also matches anything running out of $Root\node,
+# so a stray runtime node.exe - one Stop-StaleServer force-killed but did not
+# outlive, since it stops re-checking after that kill - would answer "the
+# supervisor is up" when nothing had started at all. The fallback would never
+# fire and the failed registration would surface much later, as Wait-ForServer's
+# "never started listening on port", which reads like a completely different
+# fault. Only powershell/conhost carrying the runner path IS the supervisor.
 function Wait-ForSupervisor {
   foreach ($i in 1..20) {
-    if (@(Get-ServerProcess).Count -gt 0) { return $true }
+    $supervisor = @(Get-ServerProcess | Where-Object {
+      $_.CommandLine -and
+      $_.CommandLine.IndexOf($RunnerPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    })
+    if ($supervisor.Count -gt 0) { return $true }
     Start-Sleep -Milliseconds 500
   }
   return $false
@@ -623,6 +636,10 @@ function Install-Service {
   Write-Host '      Settings > System > For developers > Terminal to "Windows Console Host".' -ForegroundColor Yellow
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
   Stop-StaleServer   # reap anything the headless attempt did manage to start
+  # Not verified with Wait-ForSupervisor, deliberately: this is the action that
+  # shipped before this fallback existed, there is nothing further to fall back
+  # TO, and Wait-ForServer is about to report a dead service anyway - with the
+  # log path, which is more use here than another ten seconds of waiting.
   Register-Service -Mode 'Plain' -Runner $runner
 }
 

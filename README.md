@@ -80,8 +80,8 @@ Everything lands in one folder: `%LOCALAPPDATA%\CrossEx-Boros`.
   and reboots: a standard **LaunchAgent** on macOS, a per-user **Scheduled Task** on
   Windows. It is not hidden — on Windows you can see it in **Task Scheduler** under the
   name **"CrossEx-Boros Terminal"** (note that Scheduled Tasks never appear in Task
-  Manager's *Startup apps* tab, so that is not where to look for it). It runs windowless
-  and stops when you sign out, starting again next time you sign in.
+  Manager's *Startup apps* tab, so that is not where to look for it). It normally runs
+  windowless, and stops when you sign out, starting again next time you sign in.
 - Opens the app in your browser and creates the launcher (an app in `~/Applications`, or a
   Start Menu shortcut).
 - **It never asks for your exchange keys in the terminal** — those are entered later, in

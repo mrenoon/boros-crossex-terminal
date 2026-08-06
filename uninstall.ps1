@@ -57,7 +57,11 @@ function Say { param([string]$m) Write-Host '==> ' -ForegroundColor Cyan -NoNewl
 # non-elevated WMI query and still slips through; the port checks that follow in
 # each script exist to catch exactly that case.
 function Get-ServerProcess {
-  $exes = @('node.exe', 'powershell.exe', 'pwsh.exe')
+  # conhost.exe belongs here because the task action wraps the supervisor in
+  # `conhost.exe --headless powershell.exe ... -File <runner>`: the runner path
+  # is in ITS command line too, so it matches on exactly the same evidence as
+  # the shell it hosts, and no unrelated conhost can ever be caught.
+  $exes = @('node.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe')
   # Trailing backslash on purpose: a bare "$Root\node" prefix would also match a
   # sibling like "$Root\node-v22\node.exe"; the separator pins it to the folder.
   $nodeDir = (Join-Path $Root 'node') + '\'
@@ -118,7 +122,7 @@ if (@(Get-ServerProcess).Count -gt 0) {
   # kills only node.exe cannot work - the supervisor loop respawns node within
   # seconds and the re-run uninstaller finds it running all over again.
   Write-Host "    Get-CimInstance Win32_Process |" -ForegroundColor Red
-  Write-Host "      Where-Object { ('node.exe','powershell.exe','pwsh.exe') -contains `$_.Name -and `$_.CommandLine -and" -ForegroundColor Red
+  Write-Host "      Where-Object { ('node.exe','powershell.exe','pwsh.exe','conhost.exe') -contains `$_.Name -and `$_.CommandLine -and" -ForegroundColor Red
   Write-Host "        (`$_.CommandLine -like '*$qRunner*' -or `$_.CommandLine -like '*$qEntry*') } |" -ForegroundColor Red
   Write-Host "      Sort-Object { `$_.CommandLine -like '*$qRunner*' } -Descending |" -ForegroundColor Red
   Write-Host "      ForEach-Object { Stop-Process -Id `$_.ProcessId -Force }" -ForegroundColor Red

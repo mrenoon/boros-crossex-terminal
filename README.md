@@ -78,7 +78,10 @@ Everything lands in one folder: `%LOCALAPPDATA%\CrossEx-Boros`.
   admin password, no changes to your system setup or PATH.
 - Registers a background service that keeps the app running and restarts it after crashes
   and reboots: a standard **LaunchAgent** on macOS, a per-user **Scheduled Task** on
-  Windows.
+  Windows. It is not hidden — on Windows you can see it in **Task Scheduler** under the
+  name **"CrossEx-Boros Terminal"** (note that Scheduled Tasks never appear in Task
+  Manager's *Startup apps* tab, so that is not where to look for it). It runs windowless
+  and stops when you sign out, starting again next time you sign in.
 - Opens the app in your browser and creates the launcher (an app in `~/Applications`, or a
   Start Menu shortcut).
 - **It never asks for your exchange keys in the terminal** — those are entered later, in
@@ -289,6 +292,8 @@ notionals and check your positions on the exchange directly.
 
 ## Troubleshooting
 
+**macOS**
+
 - **The page won't load** — the service may still be starting; wait a few seconds and
   reload. Check its status with
   `launchctl print gui/$(id -u)/com.boros.crossex-terminal | grep -E "state|pid"`
@@ -300,6 +305,26 @@ notionals and check your positions on the exchange directly.
   command to re-enable it.
 - **Restart the service manually** —
   `launchctl kickstart -k gui/$(id -u)/com.boros.crossex-terminal`.
+
+**Windows**
+
+- **The page won't load** — check the service and its logs with
+  `Get-ScheduledTaskInfo -TaskName 'CrossEx-Boros Terminal'` and
+  `Get-Content "$env:LOCALAPPDATA\CrossEx-Boros\logs\server.err.log" -Tail 40`.
+- **A blank PowerShell window keeps opening** — that is our background service, and it is
+  supposed to be invisible. Older versions became visible when the default terminal was
+  Windows Terminal, which drops the hide-the-window state
+  ([microsoft/terminal#12464](https://github.com/microsoft/terminal/issues/12464)).
+  Re-run the install command to pick up the fix. If it persists, the installer will have
+  said so during the install — set **Settings → System → For developers → Terminal** to
+  **Windows Console Host**. If the window reappears every few seconds the server itself is
+  also crash-looping, so check `server.err.log` above.
+- **"Port 6688 is already in use" during install** — find the owner with
+  `Get-NetTCPConnection -LocalPort 6688 -State Listen | Select-Object OwningProcess`, quit
+  it, and re-run the installer (or `$env:BOROS_PORT=7788` before re-running).
+- **Restart the service manually** —
+  `Stop-ScheduledTask -TaskName 'CrossEx-Boros Terminal'; Start-ScheduledTask -TaskName 'CrossEx-Boros Terminal'`,
+  or stop it for good by running the [uninstaller](#uninstall).
 
 ---
 

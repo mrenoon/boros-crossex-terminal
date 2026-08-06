@@ -371,7 +371,11 @@ function Swap-App {
 # non-elevated WMI query and still slips through; the port checks that follow in
 # each script exist to catch exactly that case.
 function Get-ServerProcess {
-  $exes = @('node.exe', 'powershell.exe', 'pwsh.exe')
+  # conhost.exe belongs here because the task action wraps the supervisor in
+  # `conhost.exe --headless powershell.exe ... -File <runner>`: the runner path
+  # is in ITS command line too, so it matches on exactly the same evidence as
+  # the shell it hosts, and no unrelated conhost can ever be caught.
+  $exes = @('node.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe')
   # Trailing backslash on purpose: a bare "$Root\node" prefix would also match a
   # sibling like "$Root\node-v22\node.exe"; the separator pins it to the folder.
   $nodeDir = (Join-Path $Root 'node') + '\'
@@ -515,15 +519,22 @@ port $Port is already in use by another program.
   }
 }
 
-function Install-Service {
-  Say 'Registering the background service...'
-  # Keep the always-on logs from growing without bound: reset on each (re)install.
-  Set-Content -Path (Join-Path $LogDir 'server.out.log') -Value '' -Encoding UTF8
-  Set-Content -Path (Join-Path $LogDir 'server.err.log') -Value '' -Encoding UTF8
-
-  $runner = Write-RunnerScript
-  $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$runner`""
+function Register-Service {
+  param(
+    [Parameter(Mandatory)][ValidateSet('Headless', 'Plain')][string]$Mode,
+    [Parameter(Mandatory)][string]$Runner
+  )
+  # 'Headless' wraps the runner in conhost.exe --headless; 'Plain' is the bare
+  # powershell.exe action, kept as the fallback. See Install-Service for why.
+  $psArgs = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Runner`""
+  if ($Mode -eq 'Headless') {
+    $exe = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    $arg = "--headless powershell.exe $psArgs"
+  } else {
+    $exe = 'powershell.exe'
+    $arg = $psArgs
+  }
+  $action = New-ScheduledTaskAction -Execute $exe -Argument $arg
   # Keepalive by REPETITION, not by restart-on-failure. Task Scheduler's "if the
   # task fails, restart every N" keys off the action's exit code and quietly does
   # not fire in a number of ordinary cases - it did not bring the server back
@@ -538,15 +549,81 @@ function Install-Service {
   $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 1)).Repetition
 
+  # Deliberately NO -Hidden. It does not hide the window - it hides the TASK from
+  # Task Scheduler's library view, so a user hunting for whatever keeps starting
+  # at sign-in cannot find it there either (and Task Manager's Startup tab never
+  # lists Scheduled Tasks at all). Suppressing the window is the ACTION's job,
+  # above. A background service that trades real money should stay findable.
   $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DontStopOnIdleEnd `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -Hidden
-  $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+  $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    -LogonType Interactive -RunLevel Limited
 
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
+}
+
+# Did the task actually put a supervisor on the CPU? Register-ScheduledTask and
+# Start-ScheduledTask both return happily for an action Windows will not run -
+# the failure surfaces only in the task's LastTaskResult, after both calls are
+# long done. So a clean registration is not evidence; a running supervisor is.
+# This is what makes the fallback in Install-Service safe to rely on.
+function Wait-ForSupervisor {
+  foreach ($i in 1..20) {
+    if (@(Get-ServerProcess).Count -gt 0) { return $true }
+    Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
+function Install-Service {
+  Say 'Registering the background service...'
+  # Keep the always-on logs from growing without bound: reset on each (re)install.
+  Set-Content -Path (Join-Path $LogDir 'server.out.log') -Value '' -Encoding UTF8
+  Set-Content -Path (Join-Path $LogDir 'server.err.log') -Value '' -Encoding UTF8
+
+  $runner = Write-RunnerScript
+
+  # -WindowStyle Hidden is NOT enough to keep this service silent, and the
+  # window it fails to hide is the single worst thing a user can see from us.
+  #
+  # powershell.exe is a console-subsystem binary: Windows creates the console
+  # BEFORE the process runs, and PowerShell can only hide it afterwards. When
+  # the default terminal application is Windows Terminal - the Windows 11 22H2+
+  # default - that console is handed off to WindowsTerminal.exe and the hidden
+  # state is dropped on the way (microsoft/terminal#12464). What the user gets,
+  # as reported in the wild: a blank "Windows PowerShell" window at sign-in
+  # showing nothing (the runner sends both streams to log files), belonging to a
+  # task Task Manager's Startup tab does not list because it never lists
+  # Scheduled Tasks - and Windows Terminal's termination behaviour can keep that
+  # window on screen even after the process behind it is gone. It looks exactly
+  # like malware, and the user cannot find anything to disable.
+  #
+  # Moving the task out of the desktop session (LogonType S4U) would settle it,
+  # but registering an S4U task needs privileges a standard user does not have -
+  # verified: "Access is denied" from a normal account - and this installer
+  # promises no Administrator password. So the console must not be created at
+  # all: conhost.exe --headless starts the console host with no window and
+  # without the default-terminal handoff. conhost.exe has shipped with Windows
+  # since 7 and needs no elevation, no extra file and no VBScript shim.
+  #
+  # --headless is undocumented, so treat it as best-effort: register with it,
+  # PROVE a supervisor actually came up, and fall back to the plain
+  # powershell.exe action (previous behaviour) if it did not. A visible window
+  # is bad; a service that does not run is worse.
+  $registered = $true
+  try { Register-Service -Mode 'Headless' -Runner $runner } catch { $registered = $false }
+  if ($registered -and (Wait-ForSupervisor)) { return }
+
+  Write-Host 'Note: could not start the service windowless on this PC, so it is registered' -ForegroundColor Yellow
+  Write-Host '      the ordinary way. If a blank PowerShell window appears and stays, set' -ForegroundColor Yellow
+  Write-Host '      Settings > System > For developers > Terminal to "Windows Console Host".' -ForegroundColor Yellow
+  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+  Stop-StaleServer   # reap anything the headless attempt did manage to start
+  Register-Service -Mode 'Plain' -Runner $runner
 }
 
 # ---------------------------------------------------------------------------
